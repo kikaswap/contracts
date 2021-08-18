@@ -4,11 +4,12 @@ pragma experimental ABIEncoderV2;
 
 import "../openzeppelin/contracts/token/ERC20/ERC20.sol";
 import "../openzeppelin/contracts/access/Ownable.sol";
-import "../openzeppelin/contracts/utils/EnumerableSet.sol";
+// import "../openzeppelin/contracts/utils/EnumerableSet.sol";
 import "../openzeppelin/contracts//math/SafeMath.sol";
 
 abstract contract DelegateERC20 is ERC20 {
     mapping (address => address) internal _delegates;
+    uint256 public holders;
 
     struct Checkpoint {
         uint32 fromBlock;
@@ -22,12 +23,21 @@ abstract contract DelegateERC20 is ERC20 {
     mapping (address => uint) public nonces;
 
     function _mint(address account, uint256 amount) internal override virtual {
+        if(amount > 0 && balanceOf(account) == 0) {
+            holders = holders.add(1);
+        }
         super._mint(account, amount);
         _moveDelegates(address(0), _delegates[account], amount);
     }
 
     function _transfer(address sender, address recipient, uint256 amount) internal override virtual {
+        if(amount > 0 && balanceOf(recipient) == 0) {
+            holders = holders.add(1);
+        }
         super._transfer(sender, recipient, amount);
+        if(amount > 0 && balanceOf(sender) == 0) {
+            holders = holders.sub(1);
+        }
         _moveDelegates(_delegates[sender], _delegates[recipient], amount);
     }
 
@@ -143,18 +153,30 @@ abstract contract DelegateERC20 is ERC20 {
 
 contract KISS is DelegateERC20, Ownable {
     using SafeMath for uint256;
-    using EnumerableSet for EnumerableSet.AddressSet;
+    // using EnumerableSet for EnumerableSet.AddressSet;
+    
+    struct MintInfo {
+        bool inMap;
+        bool isMinter;
+        uint256 maxMint;
+        uint256 nowMint;
+        uint256 minterID;
+    }
 
-    EnumerableSet.AddressSet private _minters;
+    address[] public minters;
+    mapping(address => MintInfo) public mintInfo;
     uint256 private constant maxSupply = 210000000e18;
+    uint256 public constant MAX_MINTER = 100;
     constructor() public ERC20("Kika Swap Share", "KISS"){
     }
 
     function mint(address _to, uint256 _amount) external onlyMinter returns (bool) {
-        if (_amount.add(totalSupply()) > maxSupply) {
+        MintInfo storage info = mintInfo[msg.sender];
+        if (_amount.add(info.nowMint) > info.maxMint) {
             return false;
         }
         _mint(_to, _amount);
+        info.nowMint = info.nowMint.add(_amount);
         return true;
     }
     
@@ -162,27 +184,53 @@ contract KISS is DelegateERC20, Ownable {
         return maxSupply;
     }
 
-    function addMinter(address _addMinter) external onlyOwner returns (bool) {
-        require(_addMinter != address(0), "KISS: _addMinter is the zero address");
-        return EnumerableSet.add(_minters, _addMinter);
+    function addOrUpdateMinter(address _minter, uint256 _maxMint) external onlyOwner returns (bool) {
+        require(_minter != address(0), "KISS: minter is the zero address");
+        MintInfo storage info = mintInfo[_minter];
+        uint256 sumMint = 0;
+        for (uint256 i = 0; i < minters.length; i++) {
+            uint256 mintbyaddress = _minter == minters[i] ? _maxMint : mintInfo[minters[i]].maxMint;
+            sumMint = sumMint.add(mintbyaddress);
+        }
+        require(sumMint <= maxSupply, "KISS: mint amount larger than maxSupply");
+        if (info.inMap) {
+            require(_maxMint >= info.nowMint, "KISS: mint amount less than nowMint");
+            info.maxMint = _maxMint;
+        } else {
+            require(minters.length < MAX_MINTER, "KISS: too many minter");
+            info.inMap = true;
+            info.isMinter = true;
+            info.maxMint = _maxMint;
+            info.nowMint = 0;
+            info.minterID = minters.length;
+            minters.push(_minter);
+        }
+        return true;
     }
 
     function delMinter(address _delMinter) external onlyOwner returns (bool) {
-        require(_delMinter != address(0), "KISS: _delMinter is the zero address");
-        return EnumerableSet.remove(_minters, _delMinter);
+        require(isMinter(_delMinter), "KISS: address is not minter");
+        mintInfo[_delMinter].isMinter = false;
+        return true;
     }
 
     function getMinterLength() public view returns (uint256) {
-        return EnumerableSet.length(_minters);
+        return minters.length;
     }
 
     function isMinter(address account) public view returns (bool) {
-        return EnumerableSet.contains(_minters, account);
+        return mintInfo[account].isMinter;
     }
 
     function getMinter(uint256 _index) external view onlyOwner returns (address){
         require(_index <= getMinterLength() - 1, "KISS: index out of bounds");
-        return EnumerableSet.at(_minters, _index);
+        return minters[_index];
+    }
+    
+    function getMintInfo(address minter) external view returns (uint256 maxMint, uint256 nowMint) {
+        MintInfo memory info = mintInfo[minter];
+        maxMint = info.maxMint;
+        nowMint = info.nowMint;
     }
 
     modifier onlyMinter() {

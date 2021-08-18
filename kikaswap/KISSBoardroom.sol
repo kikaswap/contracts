@@ -56,7 +56,7 @@ contract KISSBoardroom is Ownable, ReentrancyGuard {
     mapping (address => UserInfo) public userInfo;
     mapping (address => bool) public isStakedAddress;
     
-    uint256 public rewardPeriod = 30 days;
+    uint256 public rewardPeriod = 7 days;
     uint256 public lockedTime = 30 days;
     uint256 public minLockTime = 10 days;
     uint256 public midLockTime = 20 days;

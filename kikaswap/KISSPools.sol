@@ -9,6 +9,7 @@ import "../openzeppelin/contracts/utils/ReentrancyGuard.sol";
 interface IKISS is IERC20 {
     function mint(address to, uint256 amount) external returns (bool);
     function getMaxSupply() external pure returns(uint256);
+    function getMintInfo(address minter) external view returns (uint256 maxMint, uint256 nowMint);
 }
 
 contract KISSPools is Ownable, ReentrancyGuard {
@@ -28,9 +29,12 @@ contract KISSPools is Ownable, ReentrancyGuard {
     struct UserInfo {
         uint256 amount;
         uint256 rewardDebt;
-        uint256 pendingAmount;
+        uint256 harvestAmount;
+        uint256 harvestTime;
         uint256 releasedAmount;
-        uint256 lastReleaseTime;
+        uint256 releasedTime;
+        uint256 leftAmount;
+        uint256 tempReward;
     }
 
     struct PoolInfo {
@@ -59,15 +63,26 @@ contract KISSPools is Ownable, ReentrancyGuard {
     uint256 public constant MAX_RELEASE_TIME = 24 hours;
     uint256 public constant REDUCE_PERIOD = 365 days / 4;
     uint256 public constant RESERVE_PRECENTAGE = 89;
-    uint256 public constant INIT_REWARD_PER_SEC = 22330000e18 / REDUCE_PERIOD * 10 / 11;
+    // uint256 public constant INIT_REWARD_PER_SEC = 22330000e18 / REDUCE_PERIOD * 10 / 11;
     uint256 public constant BONUS_PERIOD = 14 days;
-    uint256 public constant BONUS_REWARD_PER_SEC = 7000000e18 / BONUS_PERIOD * 10 / 11;
-    uint256 public constant MAX_SINGLEPOOL_FEE = 1e17;
-    uint256 public singlePoolFee = 1e17;
-    bool public singlePoolFeeOn = true;
+    // uint256 public constant BONUS_REWARD_PER_SEC = 7000000e18 / BONUS_PERIOD * 10 / 11;
+    uint256 public constant MAX_FEE = 1e18;
+    uint256 public singleDepositFee = 1e17;
+    bool public singleDepositFeeOn = true;
+    uint256 public singleWithdrawFee = 1e17;
+    bool public singleWithdrawFeeOn = true;
+    uint256 public singleReleaseFee = 1e17;
+    bool public singleReleaseFeeOn = true;
+    uint256 public lpDepositFee = 0;
+    bool public lpDepositFeeOn = false;
+    uint256 public lpWithdrawFee = 1e17;
+    bool public lpWithdrawFeeOn = true;
+    uint256 public lpReleaseFee = 0;
+    bool public lpReleaseFeeOn = false;
     address payable public devaddr;
     address payable public feeAddr;
     mapping(address => uint256) public pidOfPool;
+    address public keeper;
     
     constructor(IKISS _KISS, address payable _devaddr, address payable _feeAddr, uint256 _startTime) public {
         require(_startTime > block.timestamp, "KISSPools: Incorrect start time");
@@ -76,6 +91,7 @@ contract KISSPools is Ownable, ReentrancyGuard {
         feeAddr = _feeAddr;
         startTime = _startTime;
         reduceStartTime = startTime + BONUS_PERIOD;
+        keeper = msg.sender;
     }
     
     function poolLength() external view returns (uint256) {
@@ -90,11 +106,16 @@ contract KISSPools is Ownable, ReentrancyGuard {
     }
 
     function reward(uint256 _timestamp) public view returns (uint256) {
+        (uint256 maxMint,) = KISS.getMintInfo(address(this));
         if (_timestamp <= reduceStartTime) {
-            return BONUS_REWARD_PER_SEC;
+            // maxMint * 7000000e18 / 210000000e18 / BONUS_PERIOD * 10 / 11
+            return maxMint / 33 / BONUS_PERIOD;
+            // return BONUS_REWARD_PER_SEC;
         }
         uint256 _phase = phase(_timestamp);
-        uint256 periodReward = INIT_REWARD_PER_SEC;
+        // uint256 periodReward = INIT_REWARD_PER_SEC;
+        // maxMint * 22330000e18 / 210000000e18 / REDUCE_PERIOD * 10 / 11
+        uint256 periodReward = maxMint * 29 / 300 / REDUCE_PERIOD;
         for (uint256 i = 1; i < _phase; i++) {
             periodReward = periodReward.mul(RESERVE_PRECENTAGE).div(100);
         }
@@ -139,10 +160,10 @@ contract KISSPools is Ownable, ReentrancyGuard {
                 uint256 poolsReward = getPoolsReward(pool.lastRewardTime, block.timestamp);
                 uint256 poolReward = _getPoolReward(poolsReward, pool.allocPoint, pool.poolType);
                 accRewardPerShare = accRewardPerShare.add(poolReward.mul(1e12).div(stakedTokenSupply));
-                return user.amount.mul(accRewardPerShare).div(1e12).sub(user.rewardDebt);
+                return user.amount.mul(accRewardPerShare).div(1e12).sub(user.rewardDebt).add(user.tempReward);
             }
             if (block.timestamp == pool.lastRewardTime) {
-                return user.amount.mul(accRewardPerShare).div(1e12).sub(user.rewardDebt);
+                return user.amount.mul(accRewardPerShare).div(1e12).sub(user.rewardDebt).add(user.tempReward);
             }
         }
         return 0;
@@ -166,7 +187,8 @@ contract KISSPools is Ownable, ReentrancyGuard {
             return;
         }
         uint256 poolReward = _getPoolReward(poolsReward, pool.allocPoint, pool.poolType);
-        uint256 remaining = KISS.getMaxSupply().sub(KISS.totalSupply());
+        (uint256 maxMint, uint256 nowMint) = KISS.getMintInfo(address(this));
+        uint256 remaining = maxMint.sub(nowMint);
 
         if (remaining > 0) {
             if (poolReward.add(poolReward.div(10)) < remaining) {
@@ -193,46 +215,43 @@ contract KISSPools is Ownable, ReentrancyGuard {
         }
     }
     
-    function _pendingTransfer(UserInfo storage _user, uint256 _amount, POOL_TYPE _poolType) internal {
-        uint256 releaseTime = _poolType == POOL_TYPE.Single ? singleReleaseTime : lpReleaseTime;
-        uint256 newReleased = _user.pendingAmount.mul(block.timestamp.sub(_user.lastReleaseTime)).div(releaseTime);
-        newReleased = newReleased > _user.pendingAmount ? _user.pendingAmount : newReleased;
-        _user.releasedAmount = _user.releasedAmount.add(newReleased);
-        _user.pendingAmount = _user.pendingAmount.sub(newReleased).add(_amount);
-        _user.lastReleaseTime = block.timestamp;
-    }
-    
     function isReleased(uint256 _pid, address _user) public view returns (bool) {
         PoolInfo memory pool = poolInfo[_pid];
         UserInfo memory user = userInfo[_pid][_user];
         uint256 releaseTime = pool.poolType == POOL_TYPE.Single ? singleReleaseTime : lpReleaseTime;
-        return user.lastReleaseTime.add(releaseTime) <= block.timestamp;
+        return user.harvestTime.add(releaseTime) < block.timestamp;
     }
     
     function withdrawReleased(uint256 _pid) external payable nonReentrant {
         PoolInfo storage pool = poolInfo[_pid];
-        if (pool.poolType == POOL_TYPE.Single) {
-            require(msg.value == singlePoolFee, "KISSPools: Can't release to single pool without fee");
+        if (pool.poolType == POOL_TYPE.Single && singleReleaseFeeOn) {
+            require(msg.value == singleReleaseFee, "KISSPools: none release fee");
+            feeAddr.transfer(address(this).balance);
+        } else if (pool.poolType == POOL_TYPE.LP && lpReleaseFeeOn) {
+            require(msg.value == lpReleaseFee, "KISSPools: none release fee");
             feeAddr.transfer(address(this).balance);
         }
         address _user = msg.sender;
         UserInfo storage user = userInfo[_pid][_user];
         uint256 releaseTime = pool.poolType == POOL_TYPE.Single ? singleReleaseTime : lpReleaseTime;
-        uint256 newReleased = user.pendingAmount.mul(block.timestamp.sub(user.lastReleaseTime)).div(releaseTime);
-        newReleased = newReleased > user.pendingAmount ? user.pendingAmount : newReleased;
-        uint256 released = user.releasedAmount.add(newReleased);
+        uint256 newRelease = user.harvestAmount.mul(block.timestamp.sub(user.releasedTime)).div(releaseTime);
+        newRelease = newRelease > user.leftAmount ? user.leftAmount : newRelease;
+        uint256 releaseAmount = user.releasedAmount.add(newRelease);
+        user.leftAmount = user.leftAmount.sub(newRelease);
         user.releasedAmount = 0;
-        user.pendingAmount = user.pendingAmount.sub(newReleased);
-        if (released > 0) {
-            _safeRewardTransfer(_user, released);
-        }
-        emit WithdrawReleased(_user, _pid, released);
+        user.releasedTime = block.timestamp;
+        require(releaseAmount > 0, "KISSPools: no released reward");
+        _safeRewardTransfer(_user, releaseAmount);
+        emit WithdrawReleased(_user, _pid, releaseAmount);
     }
     
     function deposit(uint256 _pid, uint256 _amount) external payable nonReentrant {
         PoolInfo storage pool = poolInfo[_pid];
-        if (pool.poolType == POOL_TYPE.Single) {
-            require(msg.value == singlePoolFee, "KISSPools: Can't deposit to single pool without fee");
+        if (pool.poolType == POOL_TYPE.Single && singleDepositFeeOn) {
+            require(msg.value == singleDepositFee, "KISSPools: none deposit fee");
+            feeAddr.transfer(address(this).balance);
+        } else if (pool.poolType == POOL_TYPE.LP && lpDepositFeeOn) {
+            require(msg.value == lpDepositFee, "KISSPools: none deposit fee");
             feeAddr.transfer(address(this).balance);
         }
         address _user = msg.sender;
@@ -241,7 +260,7 @@ contract KISSPools is Ownable, ReentrancyGuard {
         if (user.amount > 0) {
             uint256 pendingAmount = user.amount.mul(pool.accRewardPerShare).div(1e12).sub(user.rewardDebt);
             if (pendingAmount > 0) {
-                _pendingTransfer(user, pendingAmount, pool.poolType);
+                user.tempReward = user.tempReward.add(pendingAmount);
             }
         }
         if (_amount > 0) {
@@ -259,18 +278,26 @@ contract KISSPools is Ownable, ReentrancyGuard {
     
     function withdraw(uint256 _pid, uint256 _amount) external payable nonReentrant {
         PoolInfo storage pool = poolInfo[_pid];
-        if (pool.poolType == POOL_TYPE.Single && singlePoolFeeOn) {
-            require(msg.value == singlePoolFee, "KISSPools: Can't withdraw from single pool without fee");
+        if (pool.poolType == POOL_TYPE.Single && singleWithdrawFeeOn) {
+            require(msg.value == singleWithdrawFee, "KISSPools: none withdraw fee");
+            feeAddr.transfer(address(this).balance);
+        } else if (pool.poolType == POOL_TYPE.LP && lpWithdrawFeeOn) {
+            require(msg.value == lpWithdrawFee, "KISSPools: none withdraw fee");
             feeAddr.transfer(address(this).balance);
         }
         address _user = msg.sender;
         UserInfo storage user = userInfo[_pid][_user];
         require(user.amount >= _amount, "KISSPools: Insuffcient amount to withdraw");
         updatePool(_pid);
-        uint256 pendingAmount = user.amount.mul(pool.accRewardPerShare).div(1e12).sub(user.rewardDebt);
+        uint256 pendingAmount = user.amount.mul(pool.accRewardPerShare).div(1e12).sub(user.rewardDebt).add(user.tempReward);
         if (pendingAmount > 0) {
             require(isReleased(_pid, _user), "KISSPools: must wait until last released");
-            _pendingTransfer(user, pendingAmount, pool.poolType);
+            user.tempReward = 0;
+            user.harvestAmount = pendingAmount;
+            user.releasedAmount = user.releasedAmount.add(user.leftAmount);
+            user.leftAmount = pendingAmount;
+            user.harvestTime = block.timestamp;
+            user.releasedTime = block.timestamp;
         }
         if (_amount > 0) {
             user.amount = user.amount.sub(_amount);
@@ -287,14 +314,24 @@ contract KISSPools is Ownable, ReentrancyGuard {
     
     function emergencyWithdraw(uint256 _pid) external payable nonReentrant {
         PoolInfo storage pool = poolInfo[_pid];
-        if (pool.poolType == POOL_TYPE.Single && singlePoolFeeOn) {
-            require(msg.value == singlePoolFee, "KISSPools: Can't withdraw from single pool without fee");
+        if (pool.poolType == POOL_TYPE.Single && singleWithdrawFeeOn) {
+            require(msg.value == singleWithdrawFee, "KISSPools: none withdraw fee");
+            feeAddr.transfer(address(this).balance);
+        } else if (pool.poolType == POOL_TYPE.LP && lpWithdrawFeeOn) {
+            require(msg.value == lpWithdrawFee, "KISSPools: none withdraw fee");
+            feeAddr.transfer(address(this).balance);
         }
         address _user = msg.sender;
         UserInfo storage user = userInfo[_pid][_user];
         uint256 amount = user.amount;
         user.amount = 0;
         user.rewardDebt = 0;
+        user.harvestAmount = 0;
+        user.harvestTime = 0;
+        user.leftAmount = 0;
+        user.releasedAmount = 0;
+        user.releasedTime = 0;
+        user.tempReward = 0;
         pool.stakedToken.safeTransfer(_user, amount);
         pool.totalAmount = pool.totalAmount.sub(amount);
         isStakedAddress[_pid][_user] = false;
@@ -310,6 +347,8 @@ contract KISSPools is Ownable, ReentrancyGuard {
     }
     
     function addPool(POOL_TYPE _poolType, uint256 _allocPoint, IERC20 _stakedToken, bool _withUpdate) public  onlyOwner {
+        require(address(_stakedToken) != address(0), "KISSPools: zero pool address");
+        require(poolInfo.length == 0 || (pidOfPool[address(_stakedToken)] == 0 && poolInfo[0].stakedToken != _stakedToken), "KISSPools: pool added");
         if (_withUpdate) {
             massUpdatePools();
         }
@@ -333,6 +372,7 @@ contract KISSPools is Ownable, ReentrancyGuard {
     }
     
     function setPool(uint256 _pid, uint256 _allocPoint, bool _withUpdate) public onlyOwner {
+        require(_pid < poolInfo.length, "KISSPools: pool not exist");
         if (_withUpdate) {
             massUpdatePools();
         }
@@ -372,7 +412,8 @@ contract KISSPools is Ownable, ReentrancyGuard {
         }
     }
     
-    function setPoolShare(uint256 _single, uint256 _lp) external onlyOwner {
+    function setPoolShare(uint256 _single, uint256 _lp) external {
+        require(msg.sender == keeper, "KISSPools:keeper permit");
         require(_single.add(_lp) == 100, "KISSPools: the sum of two share should be 100");
         singleShare = _single;
         lpShare = _lp;
@@ -386,10 +427,40 @@ contract KISSPools is Ownable, ReentrancyGuard {
         feeAddr = _feeAddr;
     }
     
-    function setSinglePoolFee(uint256 _fee) external onlyOwner {
-        require(_fee <= MAX_SINGLEPOOL_FEE, "KISSPools: max fee");
-        singlePoolFeeOn = (_fee != 0);
-        singlePoolFee = _fee;
+    function setSingleDepositFee(uint256 _fee) external onlyOwner {
+        require(_fee <= MAX_FEE, "KISSPools: max fee");
+        singleDepositFeeOn = (_fee != 0);
+        singleDepositFee = _fee;
+    }
+    
+    function setSingleWithdrawFee(uint256 _fee) external onlyOwner {
+        require(_fee <= MAX_FEE, "KISSPools: max fee");
+        singleWithdrawFeeOn = (_fee != 0);
+        singleWithdrawFee = _fee;
+    }
+    
+    function setSingleReleaseFee(uint256 _fee) external onlyOwner {
+        require(_fee <= MAX_FEE, "KISSPools: max fee");
+        singleReleaseFeeOn = (_fee != 0);
+        singleReleaseFee = _fee;
+    }
+    
+    function setLPDepositFee(uint256 _fee) external onlyOwner {
+        require(_fee <= MAX_FEE, "KISSPools: max fee");
+        lpDepositFeeOn = (_fee != 0);
+        lpDepositFee = _fee;
+    }
+    
+    function setLPWithdrawFee(uint256 _fee) external onlyOwner {
+        require(_fee <= MAX_FEE, "KISSPools: max fee");
+        lpWithdrawFeeOn = (_fee != 0);
+        lpWithdrawFee = _fee;
+    }
+    
+    function setLPReleaseFee(uint256 _fee) external onlyOwner {
+        require(_fee <= MAX_FEE, "KISSPools: max fee");
+        lpReleaseFeeOn = (_fee != 0);
+        lpReleaseFee = _fee;
     }
     
     function setSingleReleaseTime(uint256 _time) external onlyOwner {
@@ -400,5 +471,9 @@ contract KISSPools is Ownable, ReentrancyGuard {
     function setLPReleaseTime(uint256 _time) external onlyOwner {
         require(_time > 0 && _time <= MAX_RELEASE_TIME, "KISSPools: invalid release time");
         lpReleaseTime = _time;
+    }
+    
+    function setKeeper(address _keeper) external onlyOwner {
+        keeper = _keeper;
     }
 }

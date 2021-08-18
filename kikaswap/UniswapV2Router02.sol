@@ -121,7 +121,7 @@ library UniswapV2Library {
                 hex'ff',
                 factory,
                 keccak256(abi.encodePacked(token0, token1)),
-                hex'0899b1d8d17950a00607880e53c38349e8381040c1a3e9ba347863562de8924b' // init code hash
+                hex'a1a34dad181aada36ec7469895fb1c05d8a2fe704f61a98c70b5da1edf4baed1'
             ))));
     }
 
@@ -355,6 +355,7 @@ interface IUniswapV2Router02 is IUniswapV2Router01 {
         address to,
         uint deadline
     ) external;
+    function swapMining() external pure returns (address);
 }
 
 
@@ -388,15 +389,57 @@ interface IWETH {
     function withdraw(uint) external;
 }
 
+abstract contract Ownable{
+    address private _owner;
+
+    event OwnershipTransferred(
+        address indexed previousOwner,
+        address indexed newOwner
+    );
+
+    constructor() internal {
+        _owner = msg.sender;
+        emit OwnershipTransferred(address(0), msg.sender);
+    }
+
+    function owner() public view returns (address) {
+        return _owner;
+    }
+
+    modifier onlyOwner() {
+        require(_owner == msg.sender, 'Ownable: caller is not the owner');
+        _;
+    }
+
+    function renounceOwnership() public onlyOwner {
+        emit OwnershipTransferred(_owner, address(0));
+        _owner = address(0);
+    }
+
+    function transferOwnership(address newOwner) public onlyOwner {
+        require(
+            newOwner != address(0),
+            'Ownable: new owner is the zero address'
+        );
+        emit OwnershipTransferred(_owner, newOwner);
+        _owner = newOwner;
+    }
+}
+
+interface ISwapMining {
+    function swap(address account, address input, address output, uint256 amount) external returns (bool);
+}
+
 // File: contracts/uniswapv2/UniswapV2Router02.sol
 
 pragma solidity =0.6.12;
 
-contract UniswapV2Router02 is IUniswapV2Router02 {
+contract UniswapV2Router02 is IUniswapV2Router02, Ownable {
     using SafeMathUniswap for uint;
 
     address public immutable override factory;
     address public immutable override WETH;
+    address public override swapMining;
 
     modifier ensure(uint deadline) {
         require(deadline >= block.timestamp, 'UniswapV2Router: EXPIRED');
@@ -410,6 +453,10 @@ contract UniswapV2Router02 is IUniswapV2Router02 {
 
     receive() external payable {
         assert(msg.sender == WETH); // only accept ETH via fallback from the WETH contract
+    }
+    
+    function setSwapMining(address _swapMininng) public onlyOwner {
+        swapMining = _swapMininng;
     }
 
     // **** ADD LIQUIDITY ****
@@ -597,6 +644,9 @@ contract UniswapV2Router02 is IUniswapV2Router02 {
             (address input, address output) = (path[i], path[i + 1]);
             (address token0,) = UniswapV2Library.sortTokens(input, output);
             uint amountOut = amounts[i + 1];
+            if (swapMining != address(0)) {
+                ISwapMining(swapMining).swap(msg.sender, input, output, amountOut);
+            }
             (uint amount0Out, uint amount1Out) = input == token0 ? (uint(0), amountOut) : (amountOut, uint(0));
             address to = i < path.length - 2 ? UniswapV2Library.pairFor(factory, output, path[i + 2]) : _to;
             IUniswapV2Pair(UniswapV2Library.pairFor(factory, input, output)).swap(
@@ -713,6 +763,9 @@ contract UniswapV2Router02 is IUniswapV2Router02 {
             (uint reserveInput, uint reserveOutput) = input == token0 ? (reserve0, reserve1) : (reserve1, reserve0);
             amountInput = IERC20Uniswap(input).balanceOf(address(pair)).sub(reserveInput);
             amountOutput = UniswapV2Library.getAmountOut(amountInput, reserveInput, reserveOutput);
+            }
+            if (swapMining != address(0)) {
+                ISwapMining(swapMining).swap(msg.sender, input, output, amountOutput);
             }
             (uint amount0Out, uint amount1Out) = input == token0 ? (uint(0), amountOutput) : (amountOutput, uint(0));
             address to = i < path.length - 2 ? UniswapV2Library.pairFor(factory, output, path[i + 2]) : _to;
