@@ -46,7 +46,6 @@ contract KISSPools is Ownable, ReentrancyGuard {
         uint256 accRewardPerShare;
         uint256 totalStakedAddress;
         uint256 totalAmount;
-        uint256 totalAmount1;
         uint256 totalAmount2;
     }
     
@@ -248,6 +247,7 @@ contract KISSPools is Ownable, ReentrancyGuard {
                 if (amount2 > 0) {
                     pool.stakedToken2.safeTransferFrom(_user, address(this), amount2);
                     user.amount2 = user.amount2.add(amount2);
+                    pool.totalAmount2 = pool.totalAmount2.add(amount2);
                 }
             }
             if (!isStakedAddress[_pid][_user]) {
@@ -285,6 +285,7 @@ contract KISSPools is Ownable, ReentrancyGuard {
                 uint256 amount2 = user.amount == _amount ? user.amount2 : user.amount2.mul(_amount).div(user.amount);
                 if (amount2 > 0) {
                     user.amount2 = user.amount2.sub(amount2);
+                    pool.totalAmount2 = pool.totalAmount2.sub(amount2);
                     pool.stakedToken2.safeTransfer(_user, amount2);
                 }
             }
@@ -309,13 +310,8 @@ contract KISSPools is Ownable, ReentrancyGuard {
         }
         address _user = msg.sender;
         UserInfo storage user = userInfo[_pid][_user];
-        if (user.amount > 0) {
-            pool.stakedToken.safeTransfer(_user, user.amount);
-        }
-        if (user.amount2 > 0 && pool.stakedToken2 != IERC20(0)) {
-            pool.stakedToken2.safeTransfer(_user, user.amount2);
-        }
         uint256 amount = user.amount;
+        uint256 amount2 = user.amount2;
         user.amount = 0;
         user.rewardDebt = 0;
         user.harvestAmount = 0;
@@ -328,7 +324,12 @@ contract KISSPools is Ownable, ReentrancyGuard {
         isStakedAddress[_pid][_user] = false;
         if (amount > 0) {
             pool.totalAmount = pool.totalAmount.sub(amount);
+            pool.stakedToken.safeTransfer(_user, user.amount);
             pool.totalStakedAddress = pool.totalStakedAddress.sub(1);
+        }
+        if (amount2 > 0) {
+            pool.totalAmount2 = pool.totalAmount2.sub(amount2);
+            pool.stakedToken2.safeTransfer(_user, user.amount);
         }
         emit EmergencyWithdraw(_user, _pid, amount);
     }
@@ -380,17 +381,12 @@ contract KISSPools is Ownable, ReentrancyGuard {
         return poolInfo;
     }
     
-    modifier validPoint(uint256 token2Rate){
-        require(token2Rate > 0, "KISSPools: point out of bound");
-        _;
-    }
-    
     modifier validPoolType(POOL_TYPE poolType){
         require(poolType <= POOL_TYPE.DUAL, "KISSPools: invalid pooltype");
         _;
     }
     
-    function addPool(POOL_TYPE _poolType, uint256 _allocPoint, IERC20 _stakedToken, IERC20 _stakedToken2, uint256 _token2Rate, bool _withUpdate) public  onlyOwner validPoint(_token2Rate) validPoolType(_poolType) {
+    function addPool(POOL_TYPE _poolType, uint256 _allocPoint, IERC20 _stakedToken, IERC20 _stakedToken2, uint256 _token2Rate, bool _withUpdate) public  onlyOwner validPoolType(_poolType) {
         require(address(_stakedToken) != address(0), "KISSPools: zero pool address");
         if (_poolType != POOL_TYPE.DUAL){
             _stakedToken2 = IERC20(0);
@@ -416,13 +412,12 @@ contract KISSPools is Ownable, ReentrancyGuard {
             accRewardPerShare: 0,
             totalAmount: 0,
             totalStakedAddress: 0,
-            totalAmount1:0,
             totalAmount2:0
         }));
         emit PoolAdded(_poolType, address(_stakedToken), address(_stakedToken2), _allocPoint);
     }
     
-    function setPool(uint256 _pid, uint256 _allocPoint, uint256 _token2Rate,  bool _withUpdate) public onlyOwner validPoint(_token2Rate) {
+    function setPool(uint256 _pid, uint256 _allocPoint, uint256 _token2Rate,  bool _withUpdate) public onlyOwner {
         require(_pid < poolInfo.length, "KISSPools: pool not exist");
         if (_withUpdate) {
             massUpdatePools();
