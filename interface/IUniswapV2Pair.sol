@@ -16,5 +16,5 @@ interface IUniswapV2Pair {
     function swap(uint amount0Out, uint amount1Out, address to, bytes calldata data) external;
     function price0CumulativeLast() external view returns (uint);
     function price1CumulativeLast() external view returns (uint);
-    function consult(address tokenIn, uint amountIn, address tokenOut) external view returns (uint amountOut);
+    function consult(address tokenIn, uint amountIn) external view returns (uint amountOut);
 }
