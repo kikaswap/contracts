@@ -1,7 +1,5 @@
-// SPDX-License-Identifier: MIT
 pragma solidity ^0.6.12;
 pragma experimental ABIEncoderV2;
-
 import "../openzeppelin/contracts/access/Ownable.sol";
 import "../openzeppelin/contracts/token/ERC20/SafeERC20.sol";
 import "../openzeppelin/contracts/utils/EnumerableSet.sol";
@@ -55,7 +53,6 @@ contract KISSBoardroom is Ownable, ReentrancyGuard {
     PoolInfo public poolInfo;
     mapping (address => UserInfo) public userInfo;
     mapping (address => bool) public isStakedAddress;
-    
     uint256 public rewardPeriod = 7 days;
     uint256 public lockedTime = 30 days;
     uint256 public minLockTime = 10 days;
