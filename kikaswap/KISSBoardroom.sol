@@ -323,6 +323,7 @@ contract KISSBoardroom is Ownable, ReentrancyGuard {
     function setDecimalsOfRewardToken(uint256 _rid, uint256 _decimals) external onlyOwner {
         RewardTokenInfo storage rewardToken = rewardTokenInfo[_rid];
         rewardToken.decimals = _decimals;
+        rewardToken.magicNumber = 10 ** (30 - _decimals);
     }
     
     function setSymbolOfRewardToken(uint256 _rid, string memory _symbol) external onlyOwner {
