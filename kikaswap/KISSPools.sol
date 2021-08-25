@@ -88,10 +88,10 @@ contract KISSPools is Ownable, ReentrancyGuard {
         startTime = _startTime;
         reduceStartTime = startTime + BONUS_PERIOD;
         oracle = _oracle;
-        setPoolConfig(POOL_TYPE.Single, 20 hours, 1e14, 1e14, 1e14, 3);
-        setPoolConfig(POOL_TYPE.LP, 10 hours, 1e14, 1e14, 1e14, 0);
-        setPoolConfig(POOL_TYPE.DUAL, 20 hours, 1e14, 1e14, 1e14, 0);
-        setPoolShare(10, 80, 10);
+        setPoolConfig(POOL_TYPE.Single, 20 hours, 1e17, 1e17, 1e17, 3);
+        setPoolConfig(POOL_TYPE.LP, 10 hours, 0, 0, 0, 0);
+        setPoolConfig(POOL_TYPE.DUAL, 20 hours, 0, 0, 0, 0);
+        setPoolShare(10, 90, 0);
     }
     
     function poolLength() external view returns (uint256) {
