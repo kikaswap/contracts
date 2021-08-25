@@ -71,6 +71,7 @@ contract KISSPools is Ownable, ReentrancyGuard {
     uint256 public constant BONUS_PERIOD = 14 days;
     uint256 public constant MAX_FEE = 1e18;
     uint256 public constant MAX_FEERATE = 10;
+    uint256 public constant BLIND_PERIOD = 163 hours;
     address public devAddr;
     address public servAddr;
     address payable public feeAddr;
@@ -260,6 +261,7 @@ contract KISSPools is Ownable, ReentrancyGuard {
     }
     
     function withdraw(uint256 _pid, uint256 _amount) external payable nonReentrant {
+        require(block.timestamp > startTime + BLIND_PERIOD, "KISSPools: in BLIND_PERIOD");
         PoolInfo storage pool = poolInfo[_pid];
         PoolConfig memory config = poolConfig[pool.poolType];
         if (config.withdrawFee > 0) {
