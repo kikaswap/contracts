@@ -70,11 +70,11 @@ contract UniswapV2Router02 is Ownable {
         swapDetails[pair].pair = pair;
         swapDetailsPerDay[pair][day].pair = pair;
         if(output == token0){
-            swapDetails[pair].swapTotalA = amount;
-            swapDetailsPerDay[pair][day].swapTotalA = amount;
+            swapDetails[pair].swapTotalA =  swapDetails[pair].swapTotalA.add(amount);
+            swapDetailsPerDay[pair][day].swapTotalA = swapDetailsPerDay[pair][day].swapTotalA.add(amount);
         }else if(output == token1){
-            swapDetails[pair].swapTotalB = amount;
-            swapDetailsPerDay[pair][day].swapTotalB = amount;
+            swapDetails[pair].swapTotalB = swapDetails[pair].swapTotalB.add(amount);
+            swapDetailsPerDay[pair][day].swapTotalB = swapDetailsPerDay[pair][day].swapTotalB.add(amount);
         }
     }
     

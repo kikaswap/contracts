@@ -326,12 +326,12 @@ contract KISSPools is Ownable, ReentrancyGuard {
         isStakedAddress[_pid][_user] = false;
         if (amount > 0) {
             pool.totalAmount = pool.totalAmount.sub(amount);
-            pool.stakedToken.safeTransfer(_user, user.amount);
+            pool.stakedToken.safeTransfer(_user, amount2);
             pool.totalStakedAddress = pool.totalStakedAddress.sub(1);
         }
         if (amount2 > 0) {
             pool.totalAmount2 = pool.totalAmount2.sub(amount2);
-            pool.stakedToken2.safeTransfer(_user, user.amount);
+            pool.stakedToken2.safeTransfer(_user, amount2);
         }
         emit EmergencyWithdraw(_user, _pid, amount);
     }
