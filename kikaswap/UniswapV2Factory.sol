@@ -394,6 +394,9 @@ contract UniswapV2Pair is UniswapV2ERC20 {
     }
 
     function consult(address tokenIn, uint amountIn) external view returns (uint amountOut) {
+        if (block.timestamp <= observation.timestamp) {
+            return 0;
+        }
         uint timeElapsed = block.timestamp - observation.timestamp;
         (uint price0Cumulative, uint price1Cumulative,) = UniswapV2OracleLibrary.currentCumulativePrices(address(this));
         if (token0 == tokenIn) {
