@@ -283,7 +283,7 @@ contract KISSPools is Ownable, ReentrancyGuard {
             user.releasedTime = block.timestamp;
         }
         if (_amount > 0) {
-            if (pool.poolType != POOL_TYPE.DUAL) {
+            if (pool.poolType == POOL_TYPE.DUAL) {
                 uint256 amount2 = user.amount == _amount ? user.amount2 : user.amount2.mul(_amount).div(user.amount);
                 if (amount2 > 0) {
                     user.amount2 = user.amount2.sub(amount2);
